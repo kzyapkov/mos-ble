@@ -1,0 +1,4 @@
+__pycache__/
+env/
+mos_ble.egg-info/
+*.py[c|o]
