@@ -1,25 +1,26 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """
 
 https://github.com/getsenic/gatt-python
 
 
+mos-ble scan
 mos-ble call method [payload]
 mos-ble logcat
-mos-ble search
 
 """
-import sys
-import json
-import struct
 import argparse
-import logging
 import functools
+import json
+import logging
+import struct
+import sys
+import threading
 
 import gatt
 
 log = logging.getLogger(__name__)
-log.setLevel(logging.WARNING)
+logging.basicConfig(level=logging.WARNING)
 
 mos_rpc_uuid = '5f6d4f53-5f52-5043-5f53-56435f49445f'
 data_uuid = '5f6d4f53-5f52-5043-5f64-6174615f5f5f'
@@ -30,14 +31,20 @@ def get_argparser():
     parser = argparse.ArgumentParser(description='Mongoose RPC over BLE')
     parser.add_argument(
             "--adapter", type=str, default='hci0')
-    parser.add_argument(
-            "--address", type=str, required=True,
-            help="BLE device address to connet to, required still")
     subparsers = parser.add_subparsers(dest="cmd")
+
+    parser_scan = subparsers.add_parser(
+            "scan", help="Scan for nearby BLE devices")
+    parser_scan.add_argument(
+            "--timeout", type=int, default=5, help="Scan time, seconds")
+
     parser_call = subparsers.add_parser(
             "call", help="Invoke a RPC method")
     parser_call.add_argument(
             "method", type=str)
+    parser_call.add_argument(
+            "--address", type=str, required=True,
+            help="BLE device address to connet to, required still")
     parser_call.add_argument(
             "--args", type=str, default="null")
     return parser
@@ -51,7 +58,7 @@ get_config_json = json.dumps({
 })
 
 class MosDevice(gatt.Device):
-    
+
     def __init__(self, mac_address, manager):
         super().__init__(mac_address=mac_address, manager=manager)
         self._id = 99
@@ -60,7 +67,6 @@ class MosDevice(gatt.Device):
         self._incoming_data = b''
         self._payload = b''
 
-    
     def _get_id(self):
         self._id += 1
         return self._id
@@ -73,14 +79,14 @@ class MosDevice(gatt.Device):
             "src": "mos-ble",
             "args": args,
         }
-        
+
         self._payload = json.dumps(frame)
 
         def _on_ready(self):
             frame_len = len(self._payload)
             log.info("sending %d bytes", frame_len)
             self.tx_ctl_ch.write_value(struct.pack(">I", frame_len))
-        
+
         if (self.is_services_resolved):
             _on_ready(self)
         else:
@@ -93,10 +99,10 @@ class MosDevice(gatt.Device):
         super().connect_succeeded()
         log.info("[%s] Connected", self.mac_address)
 
-
     def connect_failed(self, error):
         super().connect_failed(error)
-        log.info("[%s] Connection failed: %s", self.mac_address, str(error))
+        log.error("[%s] Connection failed: %s", self.mac_address, str(error))
+        self.manager.stop()
 
     def disconnect_succeeded(self):
         super().disconnect_succeeded()
@@ -111,7 +117,7 @@ class MosDevice(gatt.Device):
             log.debug("[%s]  Service [%s]" % (self.mac_address, service.uuid))
             for characteristic in service.characteristics:
                 log.debug("[%s]    Characteristic [%s]" % (self.mac_address, characteristic.uuid))
-        
+
         self.mos_rpc_service = next(
             s for s in self.services
             if s.uuid == mos_rpc_uuid)
@@ -124,13 +130,13 @@ class MosDevice(gatt.Device):
         self.rx_ctl_ch = next(
             c for c in self.mos_rpc_service.characteristics
             if c.uuid == rx_ctl_uuid)
-                
+
         self.rx_ctl_ch.enable_notifications()
 
         if callable(self._on_ready):
             log.info("_on_ready")
             self._on_ready()
-            
+
     def characteristic_write_value_succeeded(self, characteristic):
         log.debug("characteristic_write_value_succeeded on %s", characteristic.uuid)
         if characteristic.uuid == tx_ctl_uuid:
@@ -138,7 +144,7 @@ class MosDevice(gatt.Device):
             self.data_ch.write_value([ord(x) for x in self._payload])
         if characteristic.uuid == data_uuid:
             log.debug("frame sent, waiting for response")
-        
+
     def characteristic_write_value_failed(self, characteristic, error):
         log.warn("characteristic_write_value_failed on %s: %s", characteristic.uuid, error)
         self.manager.stop()
@@ -181,19 +187,39 @@ class MosDevice(gatt.Device):
                 finally:
                     self.manager.stop()
 
-        
+
+class ScanDeviceManager(gatt.DeviceManager):
+
+    def __init__(self, adapter_name, timeout=None):
+        self._devs = {}
+        if timeout is not None:
+            threading.Timer(timeout, self.stop).start()
+        super(ScanDeviceManager, self).__init__(adapter_name=adapter_name)
+
+    def device_discovered(self, device):
+        k = (device.mac_address, device.alias())
+        if k not in self._devs:
+            print("%s %s" % k)
+            self._devs[k] = True
+
 
 def main():
     p = get_argparser()
     args = p.parse_args(sys.argv[1:])
-    
-    if args.cmd == 'call':
+
+    if args.cmd == 'scan':
+        manager = ScanDeviceManager(adapter_name=args.adapter, timeout=args.timeout)
+        manager.start_discovery()
+        manager.run()
+
+    elif args.cmd == 'call':
         if args.args:
             args.args = json.loads(args.args)
         manager = gatt.DeviceManager(adapter_name=args.adapter)
         device = MosDevice(mac_address=args.address, manager=manager)
         device.connect()
-        device.run_rpc_call(args.method, args.args)
+        if device.is_connected() and device.is_services_resolved():
+            device.run_rpc_call(args.method, args.args)
 
 if __name__ == '__main__':
     main()
