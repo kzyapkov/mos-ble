@@ -9,12 +9,14 @@ mos-ble call method [payload]
 mos-ble logcat
 
 """
+import sys
+import os
+import re
 import argparse
 import functools
 import json
 import logging
 import struct
-import sys
 import threading
 
 import gatt
@@ -26,6 +28,11 @@ mos_rpc_uuid = '5f6d4f53-5f52-5043-5f53-56435f49445f'
 data_uuid = '5f6d4f53-5f52-5043-5f64-6174615f5f5f'
 tx_ctl_uuid = '5f6d4f53-5f52-5043-5f74-785f63746c5f'
 rx_ctl_uuid = '5f6d4f53-5f52-5043-5f72-785f63746c5f'
+
+def bda_arg(s):
+    if not re.match(r"^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$", s):
+        raise argparse.ArgumentTypeError
+    return s
 
 def get_argparser():
     parser = argparse.ArgumentParser(description='Mongoose RPC over BLE')
@@ -43,19 +50,13 @@ def get_argparser():
     parser_call.add_argument(
             "method", type=str)
     parser_call.add_argument(
-            "--address", type=str, required=True,
+            "--address", type=bda_arg,
+            default=(os.environ.get('MOS_BLE_ADDR', "")),
             help="BLE device address to connet to, required still")
     parser_call.add_argument(
             "--args", type=str, default="null")
     return parser
 
-
-get_config_json = json.dumps({
-    "method": "Config.Get",
-    "src": "python-test",
-    "tag": "this is a test",
-    "args": None
-})
 
 class MosDevice(gatt.Device):
 
@@ -177,7 +178,7 @@ class MosDevice(gatt.Device):
                     if ('result' in data):
                         print(json.dumps(data['result']))
                     elif ('error' in data):
-                        print(json.dumps(data['result']))
+                        print(json.dumps(data['error']))
                     else:
                         log.warn("Seemingly bad response: %s", self._incoming_data)
 
