@@ -14,7 +14,7 @@ from bleak import BleakScanner, BleakClient
 
 
 log = logging.getLogger(__name__)
-logging.basicConfig(level=logging.WARNING)
+logging.basicConfig(level=logging.INFO)
 
 mos_rpc_uuid = "5f6d4f53-5f52-5043-5f53-56435f49445f"
 data_uuid = "5f6d4f53-5f52-5043-5f64-6174615f5f5f"
@@ -45,8 +45,15 @@ def get_argparser():
         "-a",
         "--address",
         type=bda_arg,
-        default=(os.environ.get("MOS_BLE_ADDR", "")),
-        help="BLE device address to connet to, required",
+        default=(os.environ.get("MOS_BLE_ADDR", None)),
+        help="BLE device address",
+    )
+    parser_call.add_argument(
+        "-n",
+        "--name",
+        type=str,
+        default=None,
+        help="BLE device name",
     )
     parser_call.add_argument("params", type=str, nargs="?", default=None)
 
@@ -57,6 +64,15 @@ async def scan():
     devices = await BleakScanner.discover()
     for d in devices:
         print(d)
+
+
+async def lookup_name(name):
+    devices = await BleakScanner.discover()
+    for d in devices:
+        if d.name == name:
+            return d.address
+    return None
+
 
 @dataclass
 class RPCCall:
@@ -125,14 +141,14 @@ async def call(address, method, params=None):
             log.warning("Did not get a response")
             return
 
-        log.info(f"got {resp_len} bytes to read")
+        log.debug(f"got {resp_len} bytes to read")
         bytes_left = call.resp_len
         while bytes_left > 0:
             data = await client.read_gatt_char(data_uuid)
             call.resp.extend(data)
             bytes_left -= len(data)
 
-        log.info(f"resp = {call.resp}")
+        log.debug(f"resp = {call.resp}")
         try:
             resp = json.loads(call.resp)
         except json.JSONDecodeError as e:
@@ -152,17 +168,30 @@ def main():
     args = p.parse_args(sys.argv[1:])
 
     coro = None
+    loop = asyncio.get_event_loop()
 
     if args.cmd == "scan":
-        coro = scan()
+        return loop.run_until_complete(scan())
 
-    elif args.cmd == "call":
+    if args.address is None:
+        if args.name is None:
+            log.error(f"Provide either --name or --address")
+            sys.exit(9)
+        address = loop.run_until_complete(lookup_name(args.name))
+        if address is None:
+            log.error(f"Device named {args.name} not found")
+            sys.exit(9)
+        log.info(f"Found address {address} for {args.name}")
+        args.address = address
+
+    if args.cmd == "call":
         if args.params:
             args.params = json.loads(args.params)
         coro = call(args.address, args.method, args.params)
+    else:
+        log.error(f"unknown command {args.cmd}")
 
     if coro:
-        loop = asyncio.get_event_loop()
         loop.run_until_complete(coro)
 
 
