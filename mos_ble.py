@@ -55,6 +55,11 @@ def get_argparser():
         default=None,
         help="BLE device name",
     )
+    parser_call.add_argument(
+        "--mgos-args-compat",
+        action="store_true",
+        help="Use 'args' instead of 'params' for calls, for compatibility with old firmwares",
+    )
     parser_call.add_argument("params", type=str, nargs="?", default=None)
 
     return parser
@@ -79,9 +84,10 @@ class RPCCall:
     id: int
     method: str
     params: dict = None
-    src: str = 'mos-ble'
+    src: str = "mos-ble"
     dst: str = None
     resolve: asyncio.Future = None
+    mgos_args_compat = False
 
     def __init__(self, id: int, method: str, params=None):
         self.id = id
@@ -93,13 +99,16 @@ class RPCCall:
     @property
     def out_msg(self):
         msg = {
-            'id': self.id,
-            'method': self.method,
-            'src': self.src,
+            "id": self.id,
+            "method": self.method,
+            "src": self.src,
         }
-        for o in ('params', 'src', 'dst'):
+        for o in ("params", "src", "dst"):
             if getattr(self, o) is not None:
                 msg[o] = getattr(self, o)
+        if self.__class__.mgos_args_compat:
+            msg["args"] = self.params
+            del msg["params"]
         return msg
 
     @property
@@ -136,6 +145,8 @@ async def call(address, method, params=None):
                 if resp_len != 0:
                     call.resp_len = resp_len
                     break
+            else:
+                await asyncio.sleep(1)
 
         if call.resp_len <= 0:
             log.warning("Did not get a response")
@@ -155,10 +166,10 @@ async def call(address, method, params=None):
             log.error(f"response not valid JSON: {e}")
             return
 
-        if 'error' in resp:
-            print(json.dumps(resp['error'], indent=4, sort_keys=True))
-        elif 'result' in resp:
-            print(json.dumps(resp['result'], indent=4, sort_keys=True))
+        if "error" in resp:
+            print(json.dumps(resp["error"], indent=4, sort_keys=True))
+        elif "result" in resp:
+            print(json.dumps(resp["result"], indent=4, sort_keys=True))
         else:
             log.error(f"invalid response frame: {resp}")
 
@@ -172,6 +183,9 @@ def main():
 
     if args.cmd == "scan":
         return loop.run_until_complete(scan())
+
+    if args.mgos_args_compat:
+        RPCCall.mgos_args_compat = True
 
     if args.address is None:
         if args.name is None:
