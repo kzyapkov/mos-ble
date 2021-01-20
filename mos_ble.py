@@ -72,11 +72,22 @@ async def scan():
 
 
 async def lookup_name(name):
-    devices = await BleakScanner.discover()
-    for d in devices:
-        if d.name == name:
-            return d.address
-    return None
+    done = asyncio.Future()
+    def _cb(device, adv_data):
+        log.debug(f"dev='{device}' adv='{adv_data}'")
+        if device.name == name and not done.done():
+            done.set_result(device)
+
+    scanner = BleakScanner()
+    scanner.register_detection_callback(_cb)
+    await scanner.start()
+    try:
+        device = await asyncio.wait_for(done, 5)
+        return device.address
+    except asyncio.TimeoutError:
+        return None
+    finally:
+        await scanner.stop()
 
 
 @dataclass
