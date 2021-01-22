@@ -71,8 +71,9 @@ async def scan():
         print(d)
 
 
-async def lookup_name(name):
+async def lookup_address(name):
     done = asyncio.Future()
+
     def _cb(device, adv_data):
         log.debug(f"dev='{device}' adv='{adv_data}'")
         if device.name == name and not done.done():
@@ -98,7 +99,7 @@ class RPCCall:
     src: str = "mos-ble"
     dst: str = None
     resolve: asyncio.Future = None
-    mgos_args_compat = False
+    args_dest = 'params'
 
     def __init__(self, id: int, method: str, params=None):
         self.id = id
@@ -114,12 +115,11 @@ class RPCCall:
             "method": self.method,
             "src": self.src,
         }
-        for o in ("params", "src", "dst"):
+        for o in ("src", "dst"):
             if getattr(self, o) is not None:
                 msg[o] = getattr(self, o)
-        if self.__class__.mgos_args_compat:
-            msg["args"] = self.params
-            del msg["params"]
+        if self.params is not None:
+            msg[self.__class__.args_dest] = self.params
         return msg
 
     @property
@@ -149,15 +149,14 @@ async def call(address, method, params=None):
         # FIXME:
         # subscribing for notifications on rx_ctl_uuid doesn't work
         # so let's just poll for now
-        for _ in range(5):
+        for _ in range(50):
             res = await client.read_gatt_char(rx_ctl_uuid)
             if len(res) == 4:
                 resp_len = struct.unpack(">I", res)[0]
                 if resp_len != 0:
                     call.resp_len = resp_len
                     break
-            else:
-                await asyncio.sleep(1)
+            await asyncio.sleep(1)
 
         if call.resp_len <= 0:
             log.warning("Did not get a response")
@@ -179,10 +178,12 @@ async def call(address, method, params=None):
 
         if "error" in resp:
             print(json.dumps(resp["error"], indent=4, sort_keys=True))
+            sys.exit(1)
         elif "result" in resp:
             print(json.dumps(resp["result"], indent=4, sort_keys=True))
         else:
             log.error(f"invalid response frame: {resp}")
+            sys.exit(2)
 
 
 def main():
@@ -196,13 +197,13 @@ def main():
         return loop.run_until_complete(scan())
 
     if args.mgos_args_compat:
-        RPCCall.mgos_args_compat = True
+        RPCCall.args_dest = 'args'
 
     if args.address is None:
         if args.name is None:
             log.error(f"Provide either --name or --address")
             sys.exit(9)
-        address = loop.run_until_complete(lookup_name(args.name))
+        address = loop.run_until_complete(lookup_address(args.name))
         if address is None:
             log.error(f"Device named {args.name} not found")
             sys.exit(9)
