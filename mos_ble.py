@@ -196,7 +196,7 @@ def main():
     if args.cmd == "scan":
         return loop.run_until_complete(scan())
 
-    if args.cmd == "call":
+    elif args.cmd == "call":
         if args.mgos_args_compat:
             RPCCall.args_dest = 'args'
 
@@ -217,11 +217,9 @@ def main():
             args.params = json.loads(args.params)
 
         coro = call(args.address, args.method, args.params)
-    else:
-        log.error(f"unknown command {args.cmd}")
+        return loop.run_until_complete(coro)
 
-    if coro:
-        loop.run_until_complete(coro)
+    p.print_usage()
 
 
 if __name__ == "__main__":
