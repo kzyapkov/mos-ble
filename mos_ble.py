@@ -196,23 +196,26 @@ def main():
     if args.cmd == "scan":
         return loop.run_until_complete(scan())
 
-    if args.mgos_args_compat:
-        RPCCall.args_dest = 'args'
-
-    if args.address is None:
-        if args.name is None:
-            log.error(f"Provide either --name or --address")
-            sys.exit(9)
-        address = loop.run_until_complete(lookup_address(args.name))
-        if address is None:
-            log.error(f"Device named {args.name} not found")
-            sys.exit(9)
-        log.info(f"Found address {address} for {args.name}")
-        args.address = address
-
     if args.cmd == "call":
+        if args.mgos_args_compat:
+            RPCCall.args_dest = 'args'
+
+        if args.address is None:
+            if args.name is None:
+                log.error(f"Provide either --name or --address")
+                sys.exit(9)
+
+            address = loop.run_until_complete(lookup_address(args.name))
+            if address is None:
+                log.error(f"Device named {args.name} not found")
+                sys.exit(9)
+
+            log.info(f"Found address {address} for {args.name}")
+            args.address = address
+
         if args.params:
             args.params = json.loads(args.params)
+
         coro = call(args.address, args.method, args.params)
     else:
         log.error(f"unknown command {args.cmd}")
